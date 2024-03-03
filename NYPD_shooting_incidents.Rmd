@@ -1,0 +1,290 @@
+---
+title: "Week 3 Assessment"
+author: "Albert Diaz"
+date: "22/2/2024"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(tidyverse)
+library(dplyr)
+library(scales)
+library(caret)
+```
+
+## Introduction
+
+The analysis presented herein explores the NYPD Shooting Incident dataset sourced from the official repository of the City of New York. This dataset offers a comprehensive record of shooting incidents reported within the jurisdiction, comprising various attributes such as incident details, geographical coordinates, and demographic information. Through a combination of exploratory data analysis, visualization, and predictive modeling, this report aims to derive insights into the patterns and characteristics of shooting incidents in New York City. Finally, potential biases within the dataset and analytical approaches are considered to provide a holistic understanding of the findings. 
+
+```{r data}
+#Import dataset
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+data <- read_csv(url,
+                 show_col_types = FALSE)
+
+```
+
+```{r incidents_boro}
+#Transform dataset to analyze incidents
+incidents_boro <- data %>%
+  group_by(BORO) %>%
+  dplyr::summarise(count=n())
+incidents_boro <- incidents_boro %>%
+  mutate(percentage = count / sum(count) * 100)
+```
+
+```{r deaths_boro}
+#Transform dataset to analyze deaths
+deaths_boro <- data %>%
+  filter(STATISTICAL_MURDER_FLAG=='TRUE') %>%
+  group_by(BORO) %>%
+  dplyr::summarise(count=n())
+deaths_boro <- deaths_boro %>%
+  mutate(percentage = count / sum(count) * 100)
+```
+
+```{r global}
+#Create ratio deaths/incidents variable
+global <- incidents_boro %>%
+  select (BORO,
+          count_incidents=count,
+          percentage_incidents=percentage) %>%
+  left_join(deaths_boro %>% select(BORO,
+                                   count_deaths=count,
+                                   percentage_deaths=percentage),
+            by="BORO")
+global$ratio <- global$count_deaths/global$count_incidents
+```
+
+## Visualizations
+
+### Analysis of shooting incidents in New York City
+
+First, this bar chart visualizes the number of shooting incidents across different boroughs of New York City. 
+
+```{r visualization1.1}
+#Bar chart - Incidents by borough
+incidents_boro %>%
+  ggplot(aes(x = BORO,
+             y = count,
+             fill = BORO,
+             label = comma(count))) +
+  geom_bar(stat = "identity") + 
+  geom_text(position = position_stack(vjust = 1),
+            color = "black",
+            size = 3) +
+  labs(title = "Incidents by borough",
+       x = "Boroughs in New York City",
+       y = "Number of incidents",
+       fill = "Borough") +
+  scale_fill_brewer(palette = "Set2")
+
+```
+
+In adittion, this pie chart visualizes the relative distribution of shooting incidents across different boroughs of New York City. 
+
+```{r visualization1.2}
+# Pie chart - Incidents by borough
+incidents_boro %>% ggplot(aes(x = "",
+                              y = count,
+                              fill = BORO)) +
+  geom_bar(stat = "identity",
+           width = 1) +
+  coord_polar("y",
+              start = 0) +
+  labs(title = "Distribution of Incidents by Borough",
+       fill = "Borough",
+       x = NULL, y = NULL) +
+  theme_void() +
+  theme(legend.position = "right") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), position = position_stack(vjust = 0.5),
+            color = "black",
+            size = 4)+
+  scale_fill_brewer(palette = "Set2")
+```
+
+### Analysis of deaths by shooting incidents in New York City
+
+This bar chart visualizes the number of deaths by shooting incidents across different boroughs of New York City. 
+
+```{r visualization2.1}
+#Bar chart - Deaths by borough
+deaths_boro %>%
+  ggplot(aes(x = BORO,
+             y = count,
+             fill = BORO,
+             label = comma(count))) +
+  geom_bar(stat = "identity") + 
+  geom_text(position = position_stack(vjust = 1),
+            color = "black",
+            size = 3) +
+  labs(title = "Deaths by borough",
+       x = "Boroughs in New York City",
+       y = "Number of deaths",
+       fill = "Borough") +
+  scale_fill_brewer(palette = "Set2")
+
+```
+Also, this pie chart visualizes the relative distribution of deaths by shooting incidents across different boroughs of New York City.
+
+```{r visualization2.2}
+# Pie chart - Deaths by borough
+deaths_boro %>% ggplot(aes(x = "",
+                              y = count,
+                              fill = BORO)) +
+  geom_bar(stat = "identity",
+           width = 1) +
+  coord_polar("y",
+              start = 0) +
+  labs(title = "Distribution of Deaths by Borough",
+       fill = "Borough",
+       x = NULL, y = NULL) +
+  theme_void() +
+  theme(legend.position = "right") +
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), position = position_stack(vjust = 0.5),
+            color = "black",
+            size = 4)+
+  scale_fill_brewer(palette = "Set2")
+```
+
+### Analysis of ratio death/incidents
+
+This chart visualizes the ratio of deaths by number of incidents. It can be seen that the ratio is very similar for all boroughs.
+
+```{r visualization3}
+global %>%
+  ggplot(aes(x = BORO,
+             y = ratio,
+             fill = BORO,
+             label = paste0(round(ratio*100, 1), "%"))) +
+  geom_bar(stat = "identity") + 
+  geom_text(position = position_stack(vjust = 1),
+            color = "black",
+            size = 3) +
+  labs(title = "Ratio deaths/incidents by borough",
+       x = "Boroughs in New York City",
+       y = "Ratio",
+       fill = "Borough") +
+  scale_fill_brewer(palette = "Set2")
+```
+
+## Predictive Model
+
+The logistic regression model presented in this analysis aims to predict the likelihood of a shooting incident resulting in homicide based on various demographic and situational factors. 
+
+```{r preprocess}
+#Select predictors and target
+nypd_data <- data %>% select(STATISTICAL_MURDER_FLAG,
+                             VIC_AGE_GROUP,
+                             VIC_SEX,
+                             VIC_RACE,
+                             BORO)
+summary(nypd_data %>% mutate_all(as.factor))
+
+# Transform variables
+
+nypd_data$VIC_AGE_GROUP <- ifelse(nypd_data$VIC_AGE_GROUP
+                                  %in% c('1022','UNKNOWN'),
+                                  NA,
+                                  nypd_data$VIC_AGE_GROUP)
+
+nypd_data$VIC_SEX <- ifelse(nypd_data$VIC_SEX=='U',
+                            NA,
+                            nypd_data$VIC_SEX)
+
+nypd_data$target <- as.factor(
+  ifelse(nypd_data$STATISTICAL_MURDER_FLAG == 'TRUE',
+         1,
+         ifelse(nypd_data$STATISTICAL_MURDER_FLAG == 'FALSE',
+                0,
+                NA)
+         )
+  )
+
+#Omit NA values
+nypd_data <- na.omit(nypd_data)
+```
+
+```{r modeling}
+
+# Logistic regression model
+model <- glm(target ~ BORO +
+               VIC_AGE_GROUP +
+               VIC_SEX +
+               VIC_RACE,
+             data = nypd_data,
+             family = "binomial")
+summary(model)
+```
+The model is able to discriminate between positive and negative cases.
+
+```{r visualization3.1}
+# Model plot
+nypd_data$predicted_prob <- predict(model,
+                                    newdata = nypd_data,
+                                    type = "response")
+
+nypd_data %>% ggplot(aes(x = target,
+                         y = predicted_prob,
+                         fill=target)) +
+  geom_boxplot(color = "black",
+               outlier.color = "black",
+               fill=c("#FF5733", "#33B5FF")) +
+  labs(title = "Logistic Regression Model for Homicide Prediction",
+       x = "Actual Homicide Flag",
+       y = "Predicted Probability of Homicide",
+       fill="Actual Homicide Flag")+
+  theme(legend.position = "top")
+```
+
+
+The variable with the highest predictive power is age group.
+
+```{r visualization3.2}
+
+# Calculate %target by age group
+VIC_AGE_GROUP_summary <- nypd_data %>%
+  group_by(VIC_AGE_GROUP) %>%
+  summarise(positive_percent = mean(target == 1) * 100)
+
+# Plot %target by age group
+VIC_AGE_GROUP_summary %>% ggplot(aes(x = as.factor(VIC_AGE_GROUP),
+                              y = positive_percent)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  labs(title = "Percentage of Positive Target by Age Group",
+       x = "Age Group",
+       y = "Percentage of Positive Target")
+```
+
+There is an ordering of the target when we sort the population by propensity score deciles, although it is not 100% perfect.
+
+```{r visualization3.3}
+# Add decile by predicted_prob
+nypd_data <- nypd_data %>%
+  mutate(decile = ntile(predicted_prob, 10))
+
+# Calculate %target by decile
+decile_summary <- nypd_data %>%
+  group_by(decile) %>%
+  summarise(positive_percent = mean(target == 1) * 100)
+
+# Plot %target by decile
+decile_summary %>% ggplot(aes(x = as.factor(decile),
+                              y = positive_percent)) +
+  geom_bar(stat = "identity", fill = "skyblue", color = "black") +
+  labs(title = "Percentage of Positive Target by Model Propensity Deciles",
+       x = "Model Propensity Deciles",
+       y = "Percentage of Positive Target")
+```
+
+## Possible biases
+
+There may be biases in the data due to underreporting of incidents, inconsistencies in the collection of data on perpetrator and victim characteristics, or socioeconomic factors that could influence the location and nature of incidents. It is important to consider these limitations when interpreting the results of the analysis.
+
+## Conclusions
+
+* The numbers of incidents and deaths depends of borough origin: Brooklyn and Bronx accumulate the 70% of incidents and deaths by shooting in New York City.
+* Demographic factors influence shooting incidents: The analysis revealed significant correlations between age group and the probability of death in a shooting incident. The older the age, the greater the probability of death from this cause.
+* Predictive power of logistic regression model: The logistic regression model successfully captured patterns in the data and provided valuable insights into the likelihood of shooting incidents resulting in homicide.
